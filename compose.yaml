@@ -1,0 +1,45 @@
+services:
+  ollama:
+    image: docker.io/ollama/ollama:rocm
+    container_name: book-ollama
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    security_opt:
+      - label=disable # SELinux (Fedora) würde sonst den GPU-Zugriff blockieren
+    group_add:
+      - keep-groups # rootless podman: video/render-Gruppen behalten
+    volumes:
+      - ollama:/root/.ollama
+    # Falls die RX 9070 XT (gfx1201) nicht erkannt wird, einkommentieren:
+    # environment:
+    #   HSA_OVERRIDE_GFX_VERSION: "12.0.1"
+    restart: unless-stopped
+
+  agent:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: book-agent
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      # gemma3:12b: bestes Buch-/Literaturwissen und Deutsch bei ~10 GB VRAM-Bedarf
+      # (16 GB der RX 9070 XT werden nie ausgereizt). Alternative: qwen3:14b.
+      MODEL: gemma3:12b
+      # kurze Pause = maximaler Suchdurchsatz; höher stellen, um die GPU zu schonen
+      ITERATION_SLEEP: "10"
+      # Scoring-Durchläufe pro Bewertung (gemittelt, reduziert Zufallsrauschen)
+      SCORER_PASSES: "2"
+    volumes:
+      - ./data:/data:Z
+    restart: unless-stopped
+
+volumes:
+  # Um das bereits geladene Modell aus dem llm-Projekt wiederzuverwenden
+  # (spart ~9 GB Download), stattdessen:
+  #   ollama:
+  #     external: true
+  #     name: llm_ollama
+  ollama:

@@ -1,0 +1,7 @@
+# Persönliche Daten des Agenten (Leseprofil, Zustand, Logs, Listen)
+data/*
+!data/.gitkeep
+!data/leseprofil.example.md
+
+__pycache__/
+*.pyc
