@@ -20,9 +20,8 @@ Leave empty for general recommendations matching your taste.
 
 ## Books read
 
-Books you have read and enjoyed. Type: `fach` (non-fiction) or `andere`
-(everything else). They are never proposed again and steer what gets
-recommended next.
+Books you have read and enjoyed. Type: `nonfiction` or `other`.
+They are never proposed again and steer what gets recommended next.
 
 | Title | Author | Type |
 |-------|--------|------|
@@ -48,7 +47,7 @@ def norm_title(title: str) -> str:
 class Profile:
     def __init__(self, wish: list[str], read: list[dict]):
         self.wish = wish
-        self.read = read  # [{title, author, typ}], read and enjoyed
+        self.read = read  # [{title, author, type}], read and enjoyed
         payload = json.dumps({"wish": wish, "read": read}, ensure_ascii=False, sort_keys=True)
         self.hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -67,7 +66,7 @@ class Profile:
         lines.append("")
         lines.append("Books the user has read AND enjoyed (their taste - more like these):")
         if self.read:
-            lines += [f'- "{b["title"]}" by {b["author"]} ({b["typ"]})' for b in self.read]
+            lines += [f'- "{b["title"]}" by {b["author"]} ({b["type"]})' for b in self.read]
         else:
             lines.append("- (none entered yet)")
         return "\n".join(lines)
@@ -112,11 +111,13 @@ def load(path: str) -> Profile:
                 or set(cells[0]) <= {"-", ":", " "}
             ):
                 continue
+            # 'fach' is accepted for backward compatibility with German profiles
+            kind = cells[2].lower()
             read.append(
                 {
                     "title": cells[0],
                     "author": cells[1],
-                    "typ": "fach" if cells[2].lower() == "fach" else "andere",
+                    "type": "nonfiction" if kind in ("nonfiction", "non-fiction", "fach") else "other",
                 }
             )
     return Profile(wish, read)

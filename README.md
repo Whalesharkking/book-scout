@@ -4,7 +4,7 @@ An endlessly running agent that uses a local LLM (Ollama, Gemma3 12B on
 AMD/ROCm) to hunt for books matching your reading profile. It maintains two
 separate top 20 lists: **non-fiction** and **other books** (German or
 English). It learns from your taste: the books you enter as read and enjoyed
-in `data/leseprofil.md` steer all future recommendations. Every proposal is
+in `data/reading-profile.md` steer all future recommendations. Every proposal is
 verified against Open Library so that invented titles never reach the lists.
 
 ## Requirements (one time)
@@ -38,18 +38,18 @@ operation even cheaper. Other Ollama models work as well, simply change
 
 ## Maintaining your reading profile
 
-[data/leseprofil.md](data/leseprofil.md) is your input file. The agent reads
+[data/reading-profile.md](data/reading-profile.md) is your input file. The agent reads
 it again on every iteration. It is deliberately not part of the repo
 (personal data, see `.gitignore`). Use
-[data/leseprofil.example.md](data/leseprofil.example.md) as a template. If
+[data/reading-profile.example.md](data/reading-profile.example.md) as a template. If
 the file is missing, the agent creates an empty template on startup.
 
 - **Current reading wish:** bullet points describing which genres, topics or
   types you want to read right now (for example "science fiction with hard
   science" or "non-fiction about software architecture"). Leave it empty for
   general recommendations matching your taste.
-- **Books read:** a table with title, author and type (`fach` = non-fiction,
-  `andere` = everything else). Simply all books you have read and enjoyed.
+- **Books read:** a table with title, author and type (`nonfiction` or
+  `other`). Simply all books you have read and enjoyed.
   They are never proposed again, get removed from the lists immediately and
   serve as the taste profile for generator and scorer.
 
@@ -58,8 +58,8 @@ lists.
 
 ## Watching
 
-- **Recommendations:** [data/top_fach.md](data/top_fach.md) and
-  [data/top_andere.md](data/top_andere.md) (updated continuously)
+- **Recommendations:** [data/top_nonfiction.md](data/top_nonfiction.md) and
+  [data/top_other.md](data/top_other.md) (updated continuously)
 - **Log (compact, one line per iteration):** `data/agent.log` or
   `podman logs -f book-agent`
 - **State and checked books:** `data/state.json` (survives restarts and
@@ -73,7 +73,7 @@ podman-compose down
 
 ## How it works
 
-1. **Read the profile:** reading wish plus read books from `leseprofil.md`.
+1. **Read the profile:** reading wish plus read books from `reading-profile.md`.
    Read books are blocked and removed from the lists.
 2. **Generator** (LLM, creative): proposes 10 real books for the current
    category. It receives the profile, the top 20 and the recently checked

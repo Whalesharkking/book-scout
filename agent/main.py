@@ -1,9 +1,9 @@
 """Endlessly running book scout: recommends books matching the reading profile.
 
-Alternates between the categories 'fach' (non-fiction) and 'andere' (other)
-per iteration: read the profile, generate candidates, verify against Open
-Library, score critically and maintain the top 20 lists. When the reading
-profile changes (a new wish or a new book), both lists get rescored.
+Alternates between the categories 'nonfiction' and 'other' per iteration:
+read the profile, generate candidates, verify against Open Library, score
+critically and maintain the top 20 lists. When the reading profile changes
+(a new wish or a new book), both lists get rescored.
 """
 
 import logging
@@ -25,8 +25,8 @@ SCORER_PASSES = int(os.environ.get("SCORER_PASSES", "2"))  # scoring passes, ave
 LOOKUP_SLEEP = 1.0  # pause between Open Library requests (rate limit politeness)
 RESCORE_CYCLE = 24  # every 24 iterations each list gets rescored once
 
-CATEGORIES = ["fach", "andere"]
-CATEGORY_TITLES = {"fach": "Non-Fiction", "andere": "Other Books"}
+CATEGORIES = ["nonfiction", "other"]
+CATEGORY_TITLES = {"nonfiction": "Non-Fiction", "other": "Other Books"}
 
 log = logging.getLogger("agent")
 
@@ -52,7 +52,7 @@ def write_markdown(state: State) -> None:
             "",
             f"_Updated: {stamp} · iteration {state.iteration} · books checked in total: {checked}_",
             "",
-            "Read one of these and enjoyed it? Add it to `leseprofil.md`.",
+            "Read one of these and enjoyed it? Add it to `reading-profile.md`.",
             "It then disappears from the list and sharpens future recommendations.",
             "",
             "Score detail: W = wish fit, T = taste fit, Q = quality and reputation,",
@@ -179,7 +179,7 @@ def main() -> None:
     llm.wait_ready()
     llm.ensure_model()
 
-    profile_path = os.path.join(DATA_DIR, "leseprofil.md")
+    profile_path = os.path.join(DATA_DIR, "reading-profile.md")
     state = State(os.path.join(DATA_DIR, "state.json"))
     log.info("State loaded: iteration %d, %d checked books", state.iteration, len(state.seen))
 

@@ -32,7 +32,7 @@ class State:
         # book_key -> "found" | "notfound" | "read" (insertion order = check order)
         self.seen: dict[str, str] = {}
         # category -> [{key, title, author, year, language, score, reason}], descending
-        self.lists: dict[str, list] = {"fach": [], "andere": []}
+        self.lists: dict[str, list] = {"nonfiction": [], "other": []}
         # hash of the reading profile at the last scoring, a change triggers a rescore
         self.profile_hash = ""
         self._load()

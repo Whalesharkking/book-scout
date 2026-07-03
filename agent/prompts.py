@@ -1,13 +1,13 @@
 """Prompts for the generator and scorer roles (the reason in the output is German)."""
 
 CATEGORY_BRIEFS = {
-    "fach": (
-        "Non-fiction and technical books (Fachbücher): textbooks, professional "
+    "nonfiction": (
+        "Non-fiction and technical books: textbooks, professional "
         "and technical literature, science, craftsmanship of a field. "
         "Recommendations must match the user's professional interests and "
         "current reading mood. German or English editions only."
     ),
-    "andere": (
+    "other": (
         "All other books: novels, science fiction, fantasy, thrillers, "
         "biographies, popular science, essays. Recommendations must match the "
         "user's personal taste and current reading mood. "

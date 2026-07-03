@@ -1,7 +1,7 @@
 # Personal agent data (reading profile, state, logs, lists)
 data/*
 !data/.gitkeep
-!data/leseprofil.example.md
+!data/reading-profile.example.md
 
 __pycache__/
 *.pyc
