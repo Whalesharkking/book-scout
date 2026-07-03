@@ -1,4 +1,4 @@
-"""Schlanker Ollama-Client für Generator- und Scoring-Aufrufe."""
+"""Lean Ollama client for the generator and scorer calls."""
 
 import json
 import logging
@@ -65,14 +65,14 @@ class Ollama:
                 return
             except requests.RequestException:
                 time.sleep(3)
-        raise RuntimeError(f"Ollama unter {self.host} nicht erreichbar")
+        raise RuntimeError(f"Ollama not reachable at {self.host}")
 
     def ensure_model(self) -> None:
         tags = requests.get(f"{self.host}/api/tags", timeout=10).json()
         names = [m.get("name", "") for m in tags.get("models", [])]
         if any(n == self.model or n.startswith(self.model + ":") for n in names):
             return
-        log.info("Lade Modell %s herunter (einmalig, kann dauern) ...", self.model)
+        log.info("Downloading model %s (one time, may take a while) ...", self.model)
         last_pct = -10
         with requests.post(
             f"{self.host}/api/pull",
@@ -89,9 +89,9 @@ class Ollama:
                 if total and done:
                     pct = int(done * 100 / total)
                     if pct >= last_pct + 10:
-                        log.info("Modell-Download: %d%%", pct)
+                        log.info("Model download: %d%%", pct)
                         last_pct = pct
-        log.info("Modell %s bereit", self.model)
+        log.info("Model %s ready", self.model)
 
     def _chat(self, system: str, user: str, schema: dict, temperature: float) -> dict:
         payload = {
@@ -104,7 +104,7 @@ class Ollama:
             "format": schema,
             "options": {"temperature": temperature, "num_ctx": 8192},
         }
-        # Nur Thinking-Modelle kennen den Parameter; andere lehnen ihn ab.
+        # Only thinking models know this parameter, others reject it.
         if self.model.startswith(("qwen3", "deepseek")):
             payload["think"] = False
         resp = requests.post(f"{self.host}/api/chat", json=payload, timeout=600)
@@ -133,7 +133,7 @@ class Ollama:
         try:
             data = self._chat(prompts.GENERATOR_SYSTEM, user, CANDIDATES_SCHEMA, 0.9)
         except (requests.RequestException, ValueError, KeyError) as exc:
-            log.warning("Generator-Aufruf fehlgeschlagen: %s", exc)
+            log.warning("Generator call failed: %s", exc)
             return []
         return [
             c
@@ -144,10 +144,10 @@ class Ollama:
     def score(
         self, category: str, profile_block: str, books: list[dict], passes: int = 2
     ) -> list[dict]:
-        """Bewertet Bücher in drei Dimensionen, über mehrere Durchläufe gemittelt,
-        und kombiniert das Ergebnis mit dem Open-Library-Lesersignal.
+        """Rates books on three dimensions, averaged over several passes, and
+        combines the result with the Open Library reader signal.
 
-        Zuordnung der LLM-Antwort über den normalisierten Titel.
+        The LLM answer is matched back via the normalized title.
         """
         if not books:
             return []
@@ -157,13 +157,13 @@ class Ollama:
             profile_block=profile_block,
             names=names,
         )
-        # norm_title -> Liste von (dims, reason) aus den einzelnen Durchläufen
+        # norm_title -> list of (dims, reason) from the individual passes
         collected: dict[str, list] = {}
         for _ in range(max(1, passes)):
             try:
                 data = self._chat(prompts.SCORER_SYSTEM, user, SCORES_SCHEMA, 0.2)
             except (requests.RequestException, ValueError, KeyError) as exc:
-                log.warning("Scoring-Aufruf fehlgeschlagen: %s", exc)
+                log.warning("Scoring call failed: %s", exc)
                 continue
             for item in data.get("ratings", []):
                 title = norm_title(str(item.get("title", "")))

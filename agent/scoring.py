@@ -1,14 +1,14 @@
-"""Score-Berechnung: gewichtete LLM-Dimensionen + Open-Library-Lesersignal."""
+"""Score computation: weighted LLM dimensions plus the Open Library reader signal."""
 
-# Gewichtung der LLM-Dimensionen (Summe 1.0)
-WISH_WEIGHT = 0.45  # Passung zum aktuellen Lesewunsch
-TASTE_WEIGHT = 0.35  # Geschmacksnähe zu den gelesenen Büchern
-QUALITY_WEIGHT = 0.20  # Qualität/Renommee laut LLM
+# Weights of the LLM dimensions (sum 1.0)
+WISH_WEIGHT = 0.45  # fit to the current reading wish
+TASTE_WEIGHT = 0.35  # taste kinship with the read books
+QUALITY_WEIGHT = 0.20  # quality and reputation according to the LLM
 
-OL_WEIGHT = 0.15  # Anteil des Open-Library-Lesersignals am Endscore
-OL_PSEUDO_COUNT = 20  # Dämpfung: wirkt wie 20 neutrale Zusatz-Bewertungen
-OL_NEUTRAL_AVG = 3.5  # neutraler Durchschnitt (Skala 1-5)
-OL_MISSING_SCORE = 55  # Annahme ohne Leserbewertungen: leicht unter neutral (62)
+OL_WEIGHT = 0.15  # share of the Open Library reader signal in the final score
+OL_PSEUDO_COUNT = 20  # damping, acts like 20 additional neutral votes
+OL_NEUTRAL_AVG = 3.5  # neutral average (scale 1 to 5)
+OL_MISSING_SCORE = 55  # assumption without reader ratings, slightly below neutral (62)
 
 DIMENSIONS = ("wish_fit", "taste_fit", "quality")
 
@@ -22,8 +22,8 @@ def llm_score(dims: dict) -> float:
 
 
 def openlibrary_score(avg: float | None, count: int | None) -> int | None:
-    """Leserbewertung (1-5) zu 0-100, mit Bayes-Dämpfung Richtung Neutral,
-    damit wenige Einzelstimmen das Ergebnis nicht dominieren."""
+    """Reader rating (1 to 5) mapped to 0 to 100, with Bayes damping toward
+    neutral so that a few single votes cannot dominate the result."""
     if not avg or not count:
         return None
     shrunk = (avg * count + OL_NEUTRAL_AVG * OL_PSEUDO_COUNT) / (count + OL_PSEUDO_COUNT)
@@ -31,10 +31,10 @@ def openlibrary_score(avg: float | None, count: int | None) -> int | None:
 
 
 def combine(dims: dict, ol_avg: float | None, ol_count: int | None) -> tuple[int, int | None]:
-    """Endscore 0-100 aus LLM-Dimensionen und Open-Library-Signal.
+    """Final score 0 to 100 from LLM dimensions and the Open Library signal.
 
-    Bücher ohne Leserbewertungen fliegen nicht raus, bekommen aber einen
-    leichten Malus (OL_MISSING_SCORE), damit belegt gute Bücher vorne liegen.
+    Books without reader ratings are not excluded but receive a small
+    penalty (OL_MISSING_SCORE) so that provably good books rank first.
     """
     base = llm_score(dims)
     ol = openlibrary_score(ol_avg, ol_count)

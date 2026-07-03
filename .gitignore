@@ -1,4 +1,4 @@
-# Persönliche Daten des Agenten (Leseprofil, Zustand, Logs, Listen)
+# Personal agent data (reading profile, state, logs, lists)
 data/*
 !data/.gitkeep
 !data/leseprofil.example.md

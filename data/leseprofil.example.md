@@ -1,25 +1,25 @@
-# Leseprofil
+# Reading Profile
 
-Beispiel-Datei. Kopiere sie nach `data/leseprofil.md` (oder starte den Agenten
-einfach - er legt dann eine leere Vorlage an) und trage deine eigenen Daten
-ein. Der Agent liest `leseprofil.md` bei jeder Iteration neu ein; Änderungen
-führen automatisch dazu, dass beide Bestenlisten neu bewertet werden.
+Example file. Copy it to `data/leseprofil.md` (or simply start the agent, it
+creates an empty template) and enter your own data. The agent reads
+`leseprofil.md` again on every iteration. Changes automatically trigger a
+fresh scoring of both leaderboards.
 
-## Aktueller Lesewunsch
+## Current reading wish
 
-Stichpunkte, welche Genres/Themen/Typen du gerade lesen möchtest.
-Leer lassen = allgemeine Empfehlungen passend zu deinem Geschmack.
+Bullet points describing what you want to read right now.
+Leave empty for general recommendations matching your taste.
 
-- Mag Bücher mit Bezug zur Raumfahrt
-- Mag historische Romane mit echtem geschichtlichem Hintergrund
+- Books about space travel
+- Historical novels with a real historical background
 
-## Gelesene Bücher
+## Books read
 
-Bücher, die du gelesen und gut gefunden hast. Typ: `fach` oder `andere`.
-Sie werden nie mehr vorgeschlagen und steuern, was dir künftig empfohlen
-wird (mehr in diese Richtung).
+Books you have read and enjoyed. Type: `fach` (non-fiction) or `andere`
+(everything else). They are never proposed again and steer what gets
+recommended next.
 
-| Titel | Autor | Typ |
-|-------|-------|-----|
-| Der Marsianer | Andy Weir | Andere |
-| Eine kurze Geschichte der Zeit | Stephen Hawking | Fach |
+| Title | Author | Type |
+|-------|--------|------|
+| The Martian | Andy Weir | andere |
+| A Brief History of Time | Stephen Hawking | fach |

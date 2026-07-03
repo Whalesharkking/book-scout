@@ -1,7 +1,7 @@
-"""Existenz-Check für Buchvorschläge über die Open-Library-Suche.
+"""Existence check for book proposals via the Open Library search API.
 
-Verhindert, dass halluzinierte Titel in die Listen gelangen, und liefert
-kanonische Schreibweise plus Erscheinungsjahr.
+Prevents hallucinated titles from reaching the lists and provides the
+canonical spelling, the publication year and reader ratings.
 """
 
 import logging
@@ -13,7 +13,7 @@ from .profile import _norm
 log = logging.getLogger("agent")
 
 API = "https://openlibrary.org/search.json"
-HEADERS = {"User-Agent": "book-scanner/1.0 (privates Hobby-Projekt)"}
+HEADERS = {"User-Agent": "book-scout/1.0 (private hobby project)"}
 
 
 def _title_matches(proposed: str, found: str) -> bool:
@@ -27,11 +27,11 @@ def _author_matches(proposed: str, names: list[str]) -> bool:
 
 
 def lookup(title: str, author: str) -> tuple[str, dict | None]:
-    """Gibt ('found', {title, author, year}), ('notfound', None) oder ('error', None) zurück.
+    """Returns ('found', info), ('notfound', None) or ('error', None).
 
-    'found' liefert die kanonische Schreibweise aus Open Library.
-    Bei 'error' (Netzwerk/Rate-Limit) wird der Kandidat nicht als geprüft
-    markiert und kann später erneut vorgeschlagen werden.
+    'found' carries the canonical spelling from Open Library.
+    On 'error' (network or rate limit) the candidate is not marked as
+    checked and can be proposed again later.
     """
     fields = "title,author_name,first_publish_year,ratings_average,ratings_count"
     try:
@@ -55,8 +55,9 @@ def lookup(title: str, author: str) -> tuple[str, dict | None]:
                     "ratings_count": doc.get("ratings_count"),
                 }
 
-        # Übersetzte Ausgaben (z.B. deutsche Titel) stehen bei Open Library unter
-        # dem kanonischen Werktitel -> Freitext-Suche, nur der Autor muss stimmen.
+        # Translated editions (for example German titles) are indexed under
+        # the canonical work title. Fall back to a free text search where
+        # only the author has to match.
         resp = requests.get(
             API,
             params={"q": f"{title} {author}", "limit": 3, "fields": fields},
@@ -66,14 +67,14 @@ def lookup(title: str, author: str) -> tuple[str, dict | None]:
         resp.raise_for_status()
         docs = resp.json().get("docs") or []
     except (requests.RequestException, ValueError) as exc:
-        log.warning("Open-Library-Abfrage fehlgeschlagen (%s): %s", title, exc)
+        log.warning("Open Library request failed (%s): %s", title, exc)
         return "error", None
 
     for doc in docs:
         names = doc.get("author_name") or []
         if _author_matches(author, names):
             return "found", {
-                "title": title,  # vorgeschlagenen (z.B. deutschen) Titel behalten
+                "title": title,  # keep the proposed (for example German) title
                 "author": names[0] if names else author,
                 "year": doc.get("first_publish_year"),
                 "ratings_average": doc.get("ratings_average"),

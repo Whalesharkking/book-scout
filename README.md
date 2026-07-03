@@ -1,107 +1,105 @@
-# Buch-Scout
+# Book Scout
 
-Ein endlos laufender Agent, der mit einem lokalen LLM (Ollama, Gemma3 12B auf
-AMD/ROCm) Bücher sucht, die zu deinem Leseprofil passen, und zwei getrennte
-Top-20-Listen pflegt: **Fachbücher** und **Andere Bücher** (deutsch oder
-englisch). Er lernt aus deinem Geschmack: die Bücher, die du in
-`data/leseprofil.md` als gelesen und gut befunden einträgst, steuern die
-künftigen Empfehlungen. Jeder Vorschlag
-wird gegen Open Library verifiziert, damit keine erfundenen Titel in die
-Listen gelangen.
+An endlessly running agent that uses a local LLM (Ollama, Gemma3 12B on
+AMD/ROCm) to hunt for books matching your reading profile. It maintains two
+separate top 20 lists: **non-fiction** and **other books** (German or
+English). It learns from your taste: the books you enter as read and enjoyed
+in `data/leseprofil.md` steer all future recommendations. Every proposal is
+verified against Open Library so that invented titles never reach the lists.
 
-## Voraussetzungen (einmalig)
+## Requirements (one time)
 
 ```sh
 sudo dnf install podman podman-compose
 ```
 
-Der AMD-Treiber (`/dev/kfd`, `/dev/dri`) ist bereits vorhanden.
+The AMD driver (`/dev/kfd`, `/dev/dri`) must be present.
 
-## Starten
+## Start
 
 ```sh
 podman-compose up -d --build
 ```
 
-Beim ersten Start lädt Ollama das Modell `gemma3:12b` (~8 GB) herunter –
-Fortschritt steht im Log. (Tipp: In `compose.yaml` steht, wie sich das
-Ollama-Volume aus dem `llm`-Projekt wiederverwenden lässt. Beide Projekte
-gleichzeitig laufen zu lassen lohnt sich nicht – sie teilen sich die GPU.)
+On first start Ollama downloads the model `gemma3:12b` (about 8 GB). The
+progress is shown in the log. Tip: `compose.yaml` explains how to reuse an
+existing Ollama volume from another project.
 
-### Warum gemma3:12b?
+### Why gemma3:12b?
 
-Für Buchempfehlungen zählt vor allem Weltwissen über reale Bücher (deutsch
-und englisch) – Gemma3 ist dort und bei deutscher Sprache stärker als Qwen3.
-Mit ~10 GB VRAM-Bedarf (Q4 + 8k Kontext) läuft es komfortabel in den 16 GB
-der RX 9070 XT, nie am Limit. Über `ITERATION_SLEEP` lässt sich der
-Suchdurchsatz steuern: kurze Pause = viele Iterationen pro Tag, lange Pause
-(z.B. 120) = GPU idlet die meiste Zeit und der 24/7-Betrieb wird noch
-sparsamer. Wer das bereits geladene `qwen3:14b` aus
-dem Domain-Projekt weiterverwenden will: einfach `MODEL` umstellen,
-funktioniert ebenfalls.
+For book recommendations, world knowledge about real books (German and
+English) matters most. Gemma3 is stronger there and in German language
+quality than Qwen3. With about 10 GB of VRAM (Q4 plus 8k context) it runs
+comfortably within 16 GB and never at the limit. `ITERATION_SLEEP` controls
+the search throughput: a short pause means many iterations per day, a long
+pause (for example 120) keeps the GPU idle most of the time and makes 24/7
+operation even cheaper. Other Ollama models work as well, simply change
+`MODEL`.
 
-## Dein Leseprofil pflegen
+## Maintaining your reading profile
 
-[data/leseprofil.md](data/leseprofil.md) ist deine Eingabedatei, der Agent
-liest sie bei jeder Iteration neu ein. Sie ist bewusst nicht im Repo
-(persönliche Daten, siehe `.gitignore`) – als Vorlage dient
-[data/leseprofil.example.md](data/leseprofil.example.md); fehlt die Datei,
-legt der Agent beim Start automatisch eine leere Vorlage an.
+[data/leseprofil.md](data/leseprofil.md) is your input file. The agent reads
+it again on every iteration. It is deliberately not part of the repo
+(personal data, see `.gitignore`). Use
+[data/leseprofil.example.md](data/leseprofil.example.md) as a template. If
+the file is missing, the agent creates an empty template on startup.
 
-- **Aktueller Lesewunsch:** Stichpunkte, welche Genres/Themen/Typen du gerade
-  lesen möchtest (z.B. "Science-Fiction mit harter Wissenschaft",
-  "Fachbücher zu Softwarearchitektur").
-- **Gelesene Bücher:** Tabelle mit Titel, Autor und Typ (`fach`/`andere`) –
-  einfach alle Bücher, die du gelesen und gut gefunden hast. Sie werden nie
-  mehr vorgeschlagen, sofort aus den Listen entfernt und dienen Generator
-  und Scorer als Geschmacksprofil ("mehr in diese Richtung").
+- **Current reading wish:** bullet points describing which genres, topics or
+  types you want to read right now (for example "science fiction with hard
+  science" or "non-fiction about software architecture"). Leave it empty for
+  general recommendations matching your taste.
+- **Books read:** a table with title, author and type (`fach` = non-fiction,
+  `andere` = everything else). Simply all books you have read and enjoyed.
+  They are never proposed again, get removed from the lists immediately and
+  serve as the taste profile for generator and scorer.
 
-Jede Änderung am Profil löst automatisch eine Neubewertung beider Listen aus.
+Every change to the profile automatically triggers a fresh scoring of both
+lists.
 
-## Beobachten
+## Watching
 
-- **Empfehlungen:** [data/top_fach.md](data/top_fach.md) und
-  [data/top_andere.md](data/top_andere.md) (werden laufend aktualisiert)
-- **Log (kompakt, 1 Zeile pro Iteration):** `data/agent.log` oder
+- **Recommendations:** [data/top_fach.md](data/top_fach.md) and
+  [data/top_andere.md](data/top_andere.md) (updated continuously)
+- **Log (compact, one line per iteration):** `data/agent.log` or
   `podman logs -f book-agent`
-- **Zustand/geprüfte Bücher:** `data/state.json` (überlebt Neustarts,
-  verhindert doppelte Vorschläge)
+- **State and checked books:** `data/state.json` (survives restarts and
+  prevents duplicate proposals)
 
-## Stoppen
+## Stop
 
 ```sh
 podman-compose down
 ```
 
-## Funktionsweise
+## How it works
 
-1. **Profil einlesen:** Lesewunsch + gelesene Bücher aus `leseprofil.md`;
-   gelesene Bücher werden gesperrt und aus den Listen entfernt.
-2. **Generator** (LLM, kreativ): schlägt 10 reale Bücher für die aktuelle
-   Kategorie vor – bekommt Profil, Top-20 und zuletzt geprüfte Titel mit,
-   damit nichts wiederholt wird und die Vorschläge die Liste schlagen müssen.
-3. **Existenz-Check** (Open Library): Titel + Autor müssen als echtes Buch
-   auffindbar sein, sonst fliegt der Vorschlag raus (Halluzinations-Schutz).
-   Liefert zudem kanonische Schreibweise und Erscheinungsjahr.
-4. **Scorer** (LLM, streng, tiefe Temperatur): bewertet drei Dimensionen
-   getrennt 0-100 – Passung zum Lesewunsch (45 %), Geschmacksnähe zu den
-   gelesenen Büchern (35 %), Qualität/Renommee (20 %). Jede Bewertung läuft
-   `SCORER_PASSES`-mal und wird gemittelt (weniger Zufallsrauschen). Dazu
-   fließen echte Open-Library-Leserbewertungen mit 15 % in den Endscore ein
-   (Bayes-gedämpft, damit wenige Einzelstimmen nicht dominieren; ohne
-   Leserbewertungen gibt es einen leichten Malus statt Ausschluss). Das
-   Score-Detail steht als eigene Spalte in den Listen.
-5. **Top-20-Pflege:** schlechtere Einträge fliegen raus, maximal 2 Bücher
-   pro Autor und Liste. Bei Profil-Änderung sofort, sonst alle
-   ~24 Iterationen, wird jede Liste komplett neu bewertet.
+1. **Read the profile:** reading wish plus read books from `leseprofil.md`.
+   Read books are blocked and removed from the lists.
+2. **Generator** (LLM, creative): proposes 10 real books for the current
+   category. It receives the profile, the top 20 and the recently checked
+   titles so that nothing is repeated and proposals have to beat the list.
+3. **Existence check** (Open Library): title and author must be findable as
+   a real book, otherwise the proposal is dropped (hallucination guard).
+   Also provides the canonical spelling and the publication year.
+4. **Scorer** (LLM, strict, low temperature): rates three dimensions
+   separately from 0 to 100: fit to the reading wish (45 %), taste kinship
+   with the read books (35 %) and quality or reputation (20 %). Every rating
+   runs `SCORER_PASSES` times and gets averaged (less random noise). Real
+   Open Library reader ratings contribute 15 % to the final score (Bayes
+   damped so that a few single votes cannot dominate, books without reader
+   ratings get a small penalty instead of being excluded). The score detail
+   appears as its own column in the lists.
+5. **Top 20 maintenance:** weaker entries drop out, at most 2 books per
+   author and list. Each list is fully rescored immediately after a profile
+   change and otherwise about every 24 iterations.
 
-## Konfiguration (compose.yaml)
+## Configuration (compose.yaml)
 
-| Variable | Default | Bedeutung |
-|----------|---------|-----------|
-| `MODEL` | `gemma3:12b` | Ollama-Modell (`qwen3:14b` funktioniert ebenfalls) |
-| `ITERATION_SLEEP` | `10` | Pause in Sekunden zwischen Iterationen (höher = GPU-schonender) |
-| `SCORER_PASSES` | `2` | Scoring-Durchläufe pro Bewertung, Ergebnisse werden gemittelt |
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `MODEL` | `gemma3:12b` | Ollama model (`qwen3:14b` works as well) |
+| `ITERATION_SLEEP` | `10` | pause in seconds between iterations (higher is easier on the GPU) |
+| `SCORER_PASSES` | `2` | scoring passes per rating, results get averaged |
 
-Falls die GPU nicht erkannt wird: in `compose.yaml` die Zeile
-`HSA_OVERRIDE_GFX_VERSION: "12.0.1"` einkommentieren.
+If the GPU is not detected, uncomment the line
+`HSA_OVERRIDE_GFX_VERSION: "12.0.1"` in `compose.yaml`.

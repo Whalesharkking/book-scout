@@ -6,12 +6,12 @@ services:
       - /dev/kfd
       - /dev/dri
     security_opt:
-      - label=disable # SELinux (Fedora) würde sonst den GPU-Zugriff blockieren
+      - label=disable # SELinux (Fedora) would otherwise block GPU access
     group_add:
-      - keep-groups # rootless podman: video/render-Gruppen behalten
+      - keep-groups # rootless podman: keep the video and render groups
     volumes:
       - ollama:/root/.ollama
-    # Falls die RX 9070 XT (gfx1201) nicht erkannt wird, einkommentieren:
+    # If the GPU is not detected, uncomment:
     # environment:
     #   HSA_OVERRIDE_GFX_VERSION: "12.0.1"
     restart: unless-stopped
@@ -25,20 +25,19 @@ services:
       - ollama
     environment:
       OLLAMA_HOST: http://ollama:11434
-      # gemma3:12b: bestes Buch-/Literaturwissen und Deutsch bei ~10 GB VRAM-Bedarf
-      # (16 GB der RX 9070 XT werden nie ausgereizt). Alternative: qwen3:14b.
+      # gemma3:12b offers the best book knowledge and German quality at about
+      # 10 GB of VRAM (never maxes out a 16 GB card). Alternative: qwen3:14b.
       MODEL: gemma3:12b
-      # kurze Pause = maximaler Suchdurchsatz; höher stellen, um die GPU zu schonen
+      # short pause = maximum search throughput, raise it to go easier on the GPU
       ITERATION_SLEEP: "10"
-      # Scoring-Durchläufe pro Bewertung (gemittelt, reduziert Zufallsrauschen)
+      # scoring passes per rating (averaged, reduces random noise)
       SCORER_PASSES: "2"
     volumes:
       - ./data:/data:Z
     restart: unless-stopped
 
 volumes:
-  # Um das bereits geladene Modell aus dem llm-Projekt wiederzuverwenden
-  # (spart ~9 GB Download), stattdessen:
+  # To reuse an already downloaded model volume from another project:
   #   ollama:
   #     external: true
   #     name: llm_ollama

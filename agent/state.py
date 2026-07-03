@@ -1,4 +1,4 @@
-"""Persistenter Zustand: Bestenlisten + alle je geprüften Vorschläge."""
+"""Persistent state: leaderboards plus every proposal ever checked."""
 
 import json
 import os
@@ -6,11 +6,11 @@ import os
 from .profile import _norm
 
 TOP_N = 20
-MAX_PER_AUTHOR = 2  # Diversität: nicht mehr als 2 Bücher desselben Autors pro Liste
+MAX_PER_AUTHOR = 2  # diversity, at most 2 books by the same author per list
 
 
 def rank(entries: list[dict]) -> list[dict]:
-    """Sortiert absteigend nach Score, begrenzt pro Autor und kürzt auf TOP_N."""
+    """Sorts by descending score, limits per author and cuts to TOP_N."""
     ranked = sorted(entries, key=lambda e: (-e["score"], e["title"]))
     per_author: dict[str, int] = {}
     result = []
@@ -29,11 +29,11 @@ class State:
     def __init__(self, path: str):
         self.path = path
         self.iteration = 0
-        # book_key -> "found" | "notfound" | "read" (Insertion-Order = Prüf-Reihenfolge)
+        # book_key -> "found" | "notfound" | "read" (insertion order = check order)
         self.seen: dict[str, str] = {}
-        # category -> [{key, title, author, year, language, score, reason}], absteigend sortiert
+        # category -> [{key, title, author, year, language, score, reason}], descending
         self.lists: dict[str, list] = {"fach": [], "andere": []}
-        # Hash des Leseprofils der letzten Bewertung; Änderung löst Re-Scoring aus
+        # hash of the reading profile at the last scoring, a change triggers a rescore
         self.profile_hash = ""
         self._load()
 
@@ -64,11 +64,11 @@ class State:
         os.replace(tmp, self.path)
 
     def avoid_sample(self, limit: int = 100) -> list[str]:
-        """Zuletzt geprüfte Bücher, damit der Generator sie nicht wiederholt."""
+        """Recently checked books so that the generator does not repeat them."""
         return list(self.seen)[-limit:]
 
     def merge(self, category: str, scored: list[dict]) -> int:
-        """Nimmt bewertete Kandidaten auf, kürzt auf TOP_N. Gibt Anzahl Neuzugänge zurück."""
+        """Adds scored candidates and cuts to TOP_N. Returns the number of new entries."""
         combined = {e["key"]: e for e in self.lists[category]}
         for entry in scored:
             old = combined.get(entry["key"])

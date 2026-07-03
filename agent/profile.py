@@ -1,31 +1,31 @@
-"""Leseprofil: vom Nutzer gepflegtes Markdown mit Lesewunsch und gelesenen Büchern."""
+"""Reading profile: user maintained markdown with reading wish and read books."""
 
 import hashlib
 import json
 import os
 import re
 
-TEMPLATE = """# Leseprofil
+TEMPLATE = """# Reading Profile
 
-Dieses File gehört dir - der Agent liest es bei jeder Iteration neu ein.
-Änderungen (neuer Lesewunsch, neue Bewertungen) führen automatisch dazu,
-dass beide Bestenlisten neu bewertet werden.
+This file belongs to you. The agent reads it again on every iteration.
+Changes (a new reading wish or new books) automatically trigger a fresh
+scoring of both leaderboards.
 
-## Aktueller Lesewunsch
+## Current reading wish
 
-Stichpunkte, welche Genres/Themen/Typen du gerade lesen möchtest.
-Leer lassen = allgemeine Empfehlungen passend zu deinem Geschmack.
+Bullet points describing what you want to read right now.
+Leave empty for general recommendations matching your taste.
 
-- (leer = allgemein)
+- (empty = general)
 
-## Gelesene Bücher
+## Books read
 
-Bücher, die du gelesen und gut gefunden hast. Typ: `fach` oder `andere`.
-Sie werden nie mehr vorgeschlagen und steuern, was dir künftig empfohlen
-wird (mehr in diese Richtung).
+Books you have read and enjoyed. Type: `fach` (non-fiction) or `andere`
+(everything else). They are never proposed again and steer what gets
+recommended next.
 
-| Titel | Autor | Typ |
-|-------|-------|-----|
+| Title | Author | Type |
+|-------|--------|------|
 """
 
 
@@ -36,7 +36,7 @@ def _norm(text: str) -> str:
 
 
 def book_key(title: str, author: str) -> str:
-    """Stabiler Schlüssel zum Deduplizieren, z.B. 'der marsianer | andy weir'."""
+    """Stable key for deduplication, for example 'der marsianer | andy weir'."""
     t, a = _norm(title), _norm(author)
     return f"{t} | {a}" if t and a else ""
 
@@ -48,7 +48,7 @@ def norm_title(title: str) -> str:
 class Profile:
     def __init__(self, wish: list[str], read: list[dict]):
         self.wish = wish
-        self.read = read  # [{title, author, typ}] - gelesen und gut gefunden
+        self.read = read  # [{title, author, typ}], read and enjoyed
         payload = json.dumps({"wish": wish, "read": read}, ensure_ascii=False, sort_keys=True)
         self.hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -91,16 +91,26 @@ def load(path: str) -> Profile:
         stripped = line.strip()
         if stripped.startswith("## "):
             heading = stripped[3:].lower()
-            section = "wish" if "lesewunsch" in heading else "read" if "gelesen" in heading else None
+            # German and English headings are both accepted
+            if "lesewunsch" in heading or "wish" in heading or "mood" in heading:
+                section = "wish"
+            elif "gelesen" in heading or "read" in heading:
+                section = "read"
+            else:
+                section = None
             continue
         if section == "wish" and stripped.startswith("- "):
             item = stripped[2:].strip()
-            # eingeklammerte Zeilen sind Platzhalter/Hinweise, kein Lesewunsch
+            # lines in parentheses are placeholders, not a reading wish
             if item and not item.startswith("("):
                 wish.append(item)
         elif section == "read" and stripped.startswith("|"):
             cells = [c.strip() for c in stripped.strip("|").split("|")]
-            if len(cells) < 3 or cells[0].lower() == "titel" or set(cells[0]) <= {"-", ":", " "}:
+            if (
+                len(cells) < 3
+                or cells[0].lower() in ("titel", "title")
+                or set(cells[0]) <= {"-", ":", " "}
+            ):
                 continue
             read.append(
                 {

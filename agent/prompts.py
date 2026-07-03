@@ -1,4 +1,4 @@
-"""Prompts für Generator- und Scoring-Rolle des LLM (englisch, Output-Begründung deutsch)."""
+"""Prompts for the generator and scorer roles (the reason in the output is German)."""
 
 CATEGORY_BRIEFS = {
     "fach": (
@@ -39,7 +39,7 @@ Already checked or read - do NOT propose any of these again:
 {avoid_block}
 
 Propose exactly {count} NEW book recommendations for this category. Every book
-must be real; strong fit to the reader profile matters most."""
+must be real and a strong fit to the reader profile matters most."""
 
 RANKING_HEADER = (
     "Current leaderboard (your goal: proposals that beat the worst entry, "
@@ -55,7 +55,7 @@ SCORER_SYSTEM = (
     "mood. If no wish is given, judge fit to the overall reading history.\n"
     "- taste_fit: kinship with the books the user has read and enjoyed "
     "(themes, tone, style - not just genre labels)\n"
-    "- quality: literary or technical quality and reputation; for non-fiction "
+    "- quality: literary or technical quality and reputation, for non-fiction "
     "also practical relevance and whether the content is up to date\n"
     "Calibration for every dimension: 0-39 poor, 40-59 mediocre, 60-74 good, "
     "75-89 very good, 90+ exceptional and rare.\n"

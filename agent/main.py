@@ -1,9 +1,9 @@
-"""Endlos laufender Buch-Scout: empfiehlt Bücher passend zum Leseprofil.
+"""Endlessly running book scout: recommends books matching the reading profile.
 
-Wechselt pro Iteration zwischen den Kategorien 'fach' und 'andere' ab:
-Profil einlesen -> Kandidaten generieren -> Open-Library-Check ->
-kritisch scoren -> Top-20 pflegen. Ändert sich das Leseprofil
-(neuer Lesewunsch oder neue Bewertung), werden beide Listen neu bewertet.
+Alternates between the categories 'fach' (non-fiction) and 'andere' (other)
+per iteration: read the profile, generate candidates, verify against Open
+Library, score critically and maintain the top 20 lists. When the reading
+profile changes (a new wish or a new book), both lists get rescored.
 """
 
 import logging
@@ -21,12 +21,12 @@ DATA_DIR = os.environ.get("DATA_DIR", "/data")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 MODEL = os.environ.get("MODEL", "gemma3:12b")
 ITERATION_SLEEP = float(os.environ.get("ITERATION_SLEEP", "120"))
-SCORER_PASSES = int(os.environ.get("SCORER_PASSES", "2"))  # Scoring-Durchläufe, gemittelt
-LOOKUP_SLEEP = 1.0  # Pause zwischen Open-Library-Anfragen (Rate-Limit-Höflichkeit)
-RESCORE_CYCLE = 24  # alle 24 Iterationen wird jede Liste einmal neu bewertet
+SCORER_PASSES = int(os.environ.get("SCORER_PASSES", "2"))  # scoring passes, averaged
+LOOKUP_SLEEP = 1.0  # pause between Open Library requests (rate limit politeness)
+RESCORE_CYCLE = 24  # every 24 iterations each list gets rescored once
 
 CATEGORIES = ["fach", "andere"]
-CATEGORY_TITLES = {"fach": "Fachbücher", "andere": "Andere Bücher"}
+CATEGORY_TITLES = {"fach": "Non-Fiction", "andere": "Other Books"}
 
 log = logging.getLogger("agent")
 
@@ -48,28 +48,28 @@ def write_markdown(state: State) -> None:
     checked = len(state.seen)
     for category in CATEGORIES:
         lines = [
-            f"# Top {len(state.lists[category])} Buchempfehlungen – {CATEGORY_TITLES[category]}",
+            f"# Top {len(state.lists[category])} Book Recommendations: {CATEGORY_TITLES[category]}",
             "",
-            f"_Stand: {stamp} · Iteration {state.iteration} · insgesamt geprüft: {checked} Bücher_",
+            f"_Updated: {stamp} · iteration {state.iteration} · books checked in total: {checked}_",
             "",
-            "Gelesen und gut gefunden? Trage das Buch in `leseprofil.md` ein –",
-            "es verschwindet dann aus der Liste und schärft künftige Empfehlungen.",
+            "Read one of these and enjoyed it? Add it to `leseprofil.md`.",
+            "It then disappears from the list and sharpens future recommendations.",
             "",
-            "Score-Detail: W = Passung Lesewunsch, G = Geschmacksnähe,",
-            "Q = Qualität/Renommee, OL = Open-Library-Leserbewertung.",
+            "Score detail: W = wish fit, T = taste fit, Q = quality and reputation,",
+            "OL = Open Library reader rating.",
             "",
-            "| # | Titel | Autor | Jahr | Sprache | Score | Detail | Begründung |",
-            "|--:|-------|-------|-----:|:-------:|------:|--------|------------|",
+            "| # | Title | Author | Year | Language | Score | Detail | Reason |",
+            "|--:|-------|--------|-----:|:--------:|------:|--------|--------|",
         ]
         for i, e in enumerate(state.lists[category], 1):
             year = e.get("year") or "?"
             dims = e.get("dims")
             if dims:
-                detail = f"W{dims['wish_fit']} G{dims['taste_fit']} Q{dims['quality']}"
+                detail = f"W{dims['wish_fit']} T{dims['taste_fit']} Q{dims['quality']}"
                 if e.get("ol_score") is not None:
                     detail += f" OL{e['ol_score']}"
             else:
-                detail = "–"
+                detail = "?"
             lines.append(
                 f"| {i} | {e['title']} | {e['author']} | {year} "
                 f"| {e.get('language', '?')} | {e['score']} | {detail} | {e['reason']} |"
@@ -81,7 +81,7 @@ def write_markdown(state: State) -> None:
 
 
 def apply_profile(state: State, prof: profile.Profile) -> None:
-    """Gelesene Bücher als geprüft markieren und aus den Listen entfernen."""
+    """Marks read books as checked and removes them from the lists."""
     read_keys = prof.read_keys()
     for key in read_keys:
         state.seen[key] = "read"
@@ -89,23 +89,23 @@ def apply_profile(state: State, prof: profile.Profile) -> None:
         kept = [e for e in state.lists[category] if e["key"] not in read_keys]
         for e in state.lists[category]:
             if e["key"] in read_keys:
-                log.info("[%s] '%s' wurde gelesen – aus der Liste entfernt", category, e["title"])
+                log.info("[%s] '%s' was read, removed from the list", category, e["title"])
         state.lists[category] = kept
 
 
 def rescore_list(llm: Ollama, state: State, prof: profile.Profile, category: str) -> None:
-    """Bestehende Liste mit dem aktuellen Profil frisch bewerten, damit die
-    Kalibrierung stimmt und Profil-Änderungen sich sofort auswirken."""
+    """Rescores an existing list with the current profile so that the
+    calibration stays sound and profile changes take effect immediately."""
     entries = state.lists[category]
     if not entries:
         return
     scored = llm.score(category, prof.as_prompt_block(), entries, passes=SCORER_PASSES)
     if scored:
-        # nicht zugeordnete Einträge behalten ihren alten Score statt zu verschwinden
+        # unmatched entries keep their old score instead of disappearing
         scored_keys = {e["key"] for e in scored}
         kept = [e for e in entries if e["key"] not in scored_keys]
         state.lists[category] = state_mod.rank(scored + kept)
-    log.info("[%s] Liste neu bewertet (%d Einträge)", category, len(state.lists[category]))
+    log.info("[%s] list rescored (%d entries)", category, len(state.lists[category]))
 
 
 def run_iteration(llm: Ollama, state: State, prof: profile.Profile, category: str) -> None:
@@ -133,20 +133,20 @@ def run_iteration(llm: Ollama, state: State, prof: profile.Profile, category: st
                 "ratings_average": info.get("ratings_average"),
                 "ratings_count": info.get("ratings_count"),
             }
-            # kanonische Schreibweise kann vom Vorschlag abweichen -> beide sperren
+            # the canonical spelling can differ from the proposal, block both
             state.seen.setdefault(book_key(entry["title"], entry["author"]), "found")
             verified.append(entry)
         elif status == "notfound":
             state.seen[cand["key"]] = "notfound"
-        # bei "error" nichts merken, damit der Kandidat später erneut geprüft wird
+        # on "error" nothing is stored so the candidate can be checked again later
         time.sleep(LOOKUP_SLEEP)
 
     added = 0
     best_new = None
     if verified:
         scored = llm.score(category, profile_block, verified, passes=SCORER_PASSES)
-        # Bücher, die keine Bewertung bekamen (Fehler/Titel nicht zugeordnet),
-        # wieder freigeben, damit sie später erneut vorgeschlagen werden können
+        # release books that got no rating (error or unmatched title) so
+        # they can be proposed again later
         scored_keys = {e["key"] for e in scored}
         for entry in verified:
             if entry["key"] not in scored_keys:
@@ -158,7 +158,7 @@ def run_iteration(llm: Ollama, state: State, prof: profile.Profile, category: st
 
     top = state.lists[category][0] if state.lists[category] else None
     log.info(
-        "[%s] it=%d vorgeschlagen=%d neu=%d existiert=%d aufgenommen=%d bester_neuer=%s top1=%s",
+        "[%s] it=%d proposed=%d new=%d exists=%d added=%d best_new=%s top1=%s",
         category,
         state.iteration,
         len(candidates),
@@ -173,7 +173,7 @@ def run_iteration(llm: Ollama, state: State, prof: profile.Profile, category: st
 def main() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
     setup_logging()
-    log.info("Starte Buch-Scout (Modell %s, Ollama %s)", MODEL, OLLAMA_HOST)
+    log.info("Starting book scout (model %s, Ollama %s)", MODEL, OLLAMA_HOST)
 
     llm = Ollama(OLLAMA_HOST, MODEL)
     llm.wait_ready()
@@ -181,9 +181,7 @@ def main() -> None:
 
     profile_path = os.path.join(DATA_DIR, "leseprofil.md")
     state = State(os.path.join(DATA_DIR, "state.json"))
-    log.info(
-        "Zustand geladen: Iteration %d, %d geprüfte Bücher", state.iteration, len(state.seen)
-    )
+    log.info("State loaded: iteration %d, %d checked books", state.iteration, len(state.seen))
 
     while True:
         category = CATEGORIES[state.iteration % 2]
@@ -192,7 +190,7 @@ def main() -> None:
             apply_profile(state, prof)
             if prof.hash != state.profile_hash:
                 if state.profile_hash:
-                    log.info("Leseprofil geändert – beide Listen werden neu bewertet")
+                    log.info("Reading profile changed, rescoring both lists")
                     for cat in CATEGORIES:
                         rescore_list(llm, state, prof, cat)
                 state.profile_hash = prof.hash
@@ -200,7 +198,7 @@ def main() -> None:
                 rescore_list(llm, state, prof, category)
             run_iteration(llm, state, prof, category)
         except Exception as exc:
-            log.warning("Iteration %d übersprungen: %s", state.iteration, exc)
+            log.warning("Iteration %d skipped: %s", state.iteration, exc)
         state.iteration += 1
         state.save()
         write_markdown(state)
