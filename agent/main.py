@@ -1,6 +1,6 @@
 """Book scout: collaborative-filtering recommendations with an LLM wish re-ranker.
 
-Computes both top 20 lists from the reading profile and exits - run it again
+Computes the top 20 list from the reading profile and exits - run it again
 after editing the profile. It matches the read books against the Goodreads
 catalog, pulls the nearest neighbours in ALS space as candidates and blends
 the taste signal with real Goodreads reader ratings and - when a reading
@@ -24,9 +24,7 @@ INDEX_DIR = os.environ.get("INDEX_DIR", os.path.join(DATA_DIR, "index"))
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")  # empty = no wish re-ranking
 MODEL = os.environ.get("MODEL", "gemma3:12b")
 SCORER_PASSES = int(os.environ.get("SCORER_PASSES", "2"))  # re-ranker passes, averaged
-POOL = int(os.environ.get("POOL", "200"))  # candidates per list before re-ranking
-
-CATEGORY_TITLES = {"nonfiction": "Non-Fiction", "other": "Other Books"}
+POOL = int(os.environ.get("POOL", "200"))  # candidates before re-ranking
 
 log = logging.getLogger("agent")
 
@@ -90,41 +88,40 @@ def write_match_report(matched: list[dict], unmatched: list[dict]) -> None:
     write_text(os.path.join(DATA_DIR, "profile-match.md"), "\n".join(lines))
 
 
-def write_markdown(lists: dict, catalog: Catalog, matched: int, total: int, note: str) -> None:
+def write_markdown(entries: list[dict], catalog: Catalog, matched: int, total: int, note: str) -> None:
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    for category, entries in lists.items():
-        lines = [
-            f"# Top {len(entries)} Book Recommendations: {CATEGORY_TITLES[category]}",
-            "",
-            f"_Updated: {stamp} · catalog: {len(catalog)} books · "
-            f"profile: {matched} of {total} read books matched (see profile-match.md)_",
-            "",
-            "Read one of these and enjoyed it? Add it to `reading-profile.md`.",
-            "It then disappears from the list and sharpens future recommendations.",
-            "",
-            "Score detail: T = taste closeness to your read books, "
-            "Q = Goodreads reader quality, W = wish fit.",
-        ]
-        if note:
-            lines += ["", f"**Note:** {note}"]
-        lines += [
-            "",
-            "| # | Title | Author | Year | Score | Detail | Because you liked | Wish |",
-            "|--:|-------|--------|-----:|------:|--------|-------------------|------|",
-        ]
-        for i, e in enumerate(entries, 1):
-            detail = f"T{e['taste']} Q{e['quality']}"
-            if e.get("wish_fit") is not None:
-                detail += f" W{e['wish_fit']}"
-            lines.append(
-                f"| {i} | {e['title']} | {e['author']} | {e.get('year') or '?'} "
-                f"| {e['score']} | {detail} | {e['because']} | {e.get('reason', '')} |"
-            )
-        lines.append("")
-        write_text(os.path.join(DATA_DIR, f"top_{category}.md"), "\n".join(lines))
+    lines = [
+        f"# Top {len(entries)} Book Recommendations",
+        "",
+        f"_Updated: {stamp} · catalog: {len(catalog)} books · "
+        f"profile: {matched} of {total} read books matched (see profile-match.md)_",
+        "",
+        "Read one of these and enjoyed it? Add it to `reading-profile.md`.",
+        "It then disappears from the list and sharpens future recommendations.",
+        "",
+        "Score detail: T = taste closeness to your read books, "
+        "Q = Goodreads reader quality, W = wish fit.",
+    ]
+    if note:
+        lines += ["", f"**Note:** {note}"]
+    lines += [
+        "",
+        "| # | Title | Author | Year | Score | Detail | Because you liked | Wish |",
+        "|--:|-------|--------|-----:|------:|--------|-------------------|------|",
+    ]
+    for i, e in enumerate(entries, 1):
+        detail = f"T{e['taste']} Q{e['quality']}"
+        if e.get("wish_fit") is not None:
+            detail += f" W{e['wish_fit']}"
+        lines.append(
+            f"| {i} | {e['title']} | {e['author']} | {e.get('year') or '?'} "
+            f"| {e['score']} | {detail} | {e['because']} | {e.get('reason', '')} |"
+        )
+    lines.append("")
+    write_text(os.path.join(DATA_DIR, "top_books.md"), "\n".join(lines))
 
 
-def wish_scores_for(prof: profile.Profile, pools: dict) -> tuple[dict, str]:
+def wish_scores_for(prof: profile.Profile, entries: list[dict]) -> tuple[dict, str]:
     """LLM wish fit per candidate; degrades gracefully to pure CF ranking."""
     if not prof.wish:
         return {}, ""
@@ -138,15 +135,12 @@ def wish_scores_for(prof: profile.Profile, pools: dict) -> tuple[dict, str]:
         log.warning("LLM unavailable, ranking without wish fit: %s", exc)
         return {}, "LLM unreachable; ranked by taste and quality only."
     wish_block = "\n".join(f"- {w}" for w in prof.wish)
-    scores = {}
-    for category, entries in pools.items():
-        log.info("[%s] re-ranking %d candidates against the reading wish", category, len(entries))
-        try:
-            scores.update(llm.score_wish(wish_block, entries, SCORER_PASSES))
-        except Exception as exc:  # degrade to CF ranking instead of failing the rebuild
-            log.warning("Re-ranking failed for %s: %s", category, exc)
-            return scores, "LLM re-ranking failed partway; ranked (partly) by taste and quality only."
-    return scores, ""
+    log.info("Re-ranking %d candidates against the reading wish", len(entries))
+    try:
+        return llm.score_wish(wish_block, entries, SCORER_PASSES), ""
+    except Exception as exc:  # degrade to CF ranking instead of failing the rebuild
+        log.warning("Re-ranking failed: %s", exc)
+        return {}, "LLM re-ranking failed; ranked by taste and quality only."
 
 
 def rebuild(catalog: Catalog, prof: profile.Profile) -> None:
@@ -160,29 +154,23 @@ def rebuild(catalog: Catalog, prof: profile.Profile) -> None:
             "nothing to learn your taste from. Fill the 'Books read' table in "
             "reading-profile.md (English original titles match best)."
         )
-        write_markdown({c: [] for c in recommend.CATEGORIES}, catalog, 0, len(prof.read), note)
+        write_markdown([], catalog, 0, len(prof.read), note)
         return
 
-    pools = recommend.retrieve(catalog, fav_rows, blocked, POOL)
-    wish_scores, note = wish_scores_for(prof, pools)
+    entries = recommend.retrieve(catalog, fav_rows, blocked, POOL)
+    wish_scores, note = wish_scores_for(prof, entries)
 
-    lists = {}
-    for category, entries in pools.items():
-        for e in entries:
-            wish = wish_scores.get(norm_title(e["title"]))
-            e["quality"] = scoring.quality_score(e["avg"], e["count"])
-            e["wish_fit"] = wish[0] if wish else None
-            e["reason"] = wish[1] if wish else ""
-            e["score"] = scoring.combine(e["taste"], e["quality"], e["wish_fit"])
-            e["because"] = "; ".join(catalog.books[r]["title"] for r in e["because"])
-        lists[category] = recommend.rank(entries)
-        top = lists[category][0] if lists[category] else None
-        log.info(
-            "[%s] list rebuilt, top1=%s",
-            category,
-            f"{top['title']}({top['score']})" if top else "-",
-        )
-    write_markdown(lists, catalog, len(matched), len(prof.read), note)
+    for e in entries:
+        wish = wish_scores.get(norm_title(e["title"]))
+        e["quality"] = scoring.quality_score(e["avg"], e["count"])
+        e["wish_fit"] = wish[0] if wish else None
+        e["reason"] = wish[1] if wish else ""
+        e["score"] = scoring.combine(e["taste"], e["quality"], e["wish_fit"])
+        e["because"] = "; ".join(catalog.books[r]["title"] for r in e["because"])
+    top_list = recommend.rank(entries)
+    top = top_list[0] if top_list else None
+    log.info("List rebuilt, top1=%s", f"{top['title']}({top['score']})" if top else "-")
+    write_markdown(top_list, catalog, len(matched), len(prof.read), note)
 
 
 def main() -> None:

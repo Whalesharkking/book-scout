@@ -32,21 +32,6 @@ log = logging.getLogger("build")
 CHUNK_ROWS = 5_000_000
 ENGLISH = {"", "eng", "en", "en-US", "en-GB", "en-CA", "en-IN"}
 
-# Genre buckets of goodreads_book_genres_initial. A book counts as
-# non-fiction when the non-fiction shelf beats all clearly fictional ones;
-# the mixed "history, historical fiction, biography" bucket is ignored.
-NONFICTION_KEY = "non-fiction"
-FICTION_KEYS = (
-    "fiction",
-    "fantasy, paranormal",
-    "mystery, thriller, crime",
-    "romance",
-    "young-adult",
-    "poetry",
-    "comics, graphic",
-    "children",
-)
-
 
 def _add_counts(counts: np.ndarray, ids: np.ndarray) -> np.ndarray:
     fresh = np.bincount(ids, minlength=counts.size)
@@ -85,18 +70,6 @@ def load_book_id_map(path: str) -> dict[int, int]:
     df = pd.read_csv(path, dtype=np.int64)
     csv_col, gr_col = df.columns[0], df.columns[1]
     return dict(zip(df[gr_col].to_numpy(), df[csv_col].to_numpy()))
-
-
-def load_nonfiction_ids(path: str) -> set[int]:
-    nonfiction = set()
-    with gzip.open(path, "rt", encoding="utf-8") as fh:
-        for line in fh:
-            row = json.loads(line)
-            genres = row.get("genres") or {}
-            nf = genres.get(NONFICTION_KEY, 0)
-            if nf and nf > max((genres.get(k, 0) for k in FICTION_KEYS), default=0):
-                nonfiction.add(int(row["book_id"]))
-    return nonfiction
 
 
 def load_author_names(path: str, wanted: set[str]) -> dict[str, str]:
@@ -222,12 +195,10 @@ def main() -> None:
     books.sort(key=lambda b: -b["pos"])
     log.info("catalog: %d works kept (English, >= %d positives)", len(books), args.min_book)
 
-    nonfiction = load_nonfiction_ids(os.path.join(src, "goodreads_book_genres_initial.json.gz"))
     names = load_author_names(
         os.path.join(src, "goodreads_book_authors.json.gz"), {b["author_id"] for b in books}
     )
     for b in books:
-        b["nf"] = b["id"] in nonfiction
         b["author"] = names.get(b.pop("author_id"), "")
 
     # factor row N = catalog line N

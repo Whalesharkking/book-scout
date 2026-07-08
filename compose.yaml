@@ -18,7 +18,7 @@ services:
     #   HSA_OVERRIDE_GFX_VERSION: "12.0.1"
     restart: unless-stopped
 
-  # One-shot: computes both lists and exits.
+  # One-shot: computes the recommendation list and exits.
   # Usage: podman-compose run --rm agent
   agent:
     build:

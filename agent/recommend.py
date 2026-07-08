@@ -6,15 +6,11 @@ from .catalog import Catalog
 from .profile import _norm, book_key
 
 TOP_N = 20
-MAX_PER_AUTHOR = 2  # diversity, at most 2 books by the same author per list
-
-CATEGORIES = ("nonfiction", "other")
+MAX_PER_AUTHOR = 2  # diversity, at most 2 books by the same author
 
 
-def retrieve(
-    catalog: Catalog, fav_rows: list[int], blocked: set[str], pool: int
-) -> dict[str, list[dict]]:
-    """Top candidate pool per category, most similar to the favourites first.
+def retrieve(catalog: Catalog, fav_rows: list[int], blocked: set[str], pool: int) -> list[dict]:
+    """Top candidate pool, most similar to the favourites first.
 
     The taste score is the rank within the pool mapped to 100..0: it expresses
     how close a candidate is to the reading history relative to the other
@@ -25,21 +21,18 @@ def retrieve(
     agg = sims.sum(axis=1)
     agg[fav_rows] = -np.inf
 
-    blocked = set(blocked)  # local copy, also blocks duplicate titles within the pools
-    pools: dict[str, list[dict]] = {cat: [] for cat in CATEGORIES}
+    blocked = set(blocked)  # local copy, also blocks duplicate titles within the pool
+    entries: list[dict] = []
     for row in np.argsort(-agg):
-        if all(len(entries) >= pool for entries in pools.values()):
+        if len(entries) >= pool:
             break
         book = catalog.books[row]
-        category = "nonfiction" if book.get("nf") else "other"
-        if len(pools[category]) >= pool:
-            continue
         key = book_key(book["title"], book["author"])
         if not key or key in blocked:
             continue
         blocked.add(key)
         anchors = np.argsort(-sims[row])[:2]
-        pools[category].append(
+        entries.append(
             {
                 "row": int(row),
                 "title": book["title"],
@@ -51,11 +44,10 @@ def retrieve(
             }
         )
 
-    for entries in pools.values():
-        span = max(len(entries) - 1, 1)
-        for i, entry in enumerate(entries):
-            entry["taste"] = round(100 * (1 - i / span))
-    return pools
+    span = max(len(entries) - 1, 1)
+    for i, entry in enumerate(entries):
+        entry["taste"] = round(100 * (1 - i / span))
+    return entries
 
 
 def rank(entries: list[dict]) -> list[dict]:

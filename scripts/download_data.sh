@@ -15,8 +15,7 @@ for f in \
     goodreads_interactions.csv \
     book_id_map.csv \
     goodreads_books.json.gz \
-    goodreads_book_authors.json.gz \
-    goodreads_book_genres_initial.json.gz
+    goodreads_book_authors.json.gz
 do
     echo "==> $f"
     curl -fL --retry 5 --retry-all-errors -C - -o "$TARGET/$f" "$BASE/$f"

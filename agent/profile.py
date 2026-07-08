@@ -8,7 +8,7 @@ import re
 TEMPLATE = """# Reading Profile
 
 This file belongs to you. Enter your data, then run the agent once to
-(re)compute both leaderboards.
+(re)compute the recommendation list.
 
 ## Current reading wish
 
@@ -19,12 +19,11 @@ part that uses the LLM. Leave empty for pure taste-based recommendations.
 
 ## Books read
 
-Books you have read and enjoyed. Type: `nonfiction` or `other`.
-They are never proposed again and steer what gets recommended next.
-English original titles match best.
+Books you have read and enjoyed. They are never proposed again and steer
+what gets recommended next. English original titles match best.
 
-| Title | Author | Type |
-|-------|--------|------|
+| Title | Author |
+|-------|--------|
 """
 
 
@@ -47,7 +46,7 @@ def norm_title(title: str) -> str:
 class Profile:
     def __init__(self, wish: list[str], read: list[dict]):
         self.wish = wish
-        self.read = read  # [{title, author, type}], read and enjoyed
+        self.read = read  # [{title, author}], read and enjoyed
         payload = json.dumps({"wish": wish, "read": read}, ensure_ascii=False, sort_keys=True)
         self.hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -87,20 +86,13 @@ def load(path: str) -> Profile:
             if item and not item.startswith("("):
                 wish.append(item)
         elif section == "read" and stripped.startswith("|"):
+            # extra columns (for example the old Type column) are ignored
             cells = [c.strip() for c in stripped.strip("|").split("|")]
             if (
-                len(cells) < 3
+                len(cells) < 2
                 or cells[0].lower() in ("titel", "title")
                 or set(cells[0]) <= {"-", ":", " "}
             ):
                 continue
-            # 'fach' is accepted for backward compatibility with German profiles
-            kind = cells[2].lower()
-            read.append(
-                {
-                    "title": cells[0],
-                    "author": cells[1],
-                    "type": "nonfiction" if kind in ("nonfiction", "non-fiction", "fach") else "other",
-                }
-            )
+            read.append({"title": cells[0], "author": cells[1]})
     return Profile(wish, read)
