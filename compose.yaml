@@ -11,11 +11,15 @@ services:
       - keep-groups # rootless podman: keep the video and render groups
     volumes:
       - ollama:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434" # so the host-run agent can reach the re-ranker
     # If the GPU is not detected, uncomment:
     # environment:
     #   HSA_OVERRIDE_GFX_VERSION: "12.0.1"
     restart: unless-stopped
 
+  # One-shot: computes both lists and exits.
+  # Usage: podman-compose run --rm agent
   agent:
     build:
       context: .
@@ -24,17 +28,16 @@ services:
     depends_on:
       - ollama
     environment:
+      # The LLM is only used to re-rank candidates against the reading wish.
+      # Leave OLLAMA_HOST empty to run pure CF ranking without any LLM.
       OLLAMA_HOST: http://ollama:11434
-      # gemma3:12b offers the best book knowledge and German quality at about
-      # 10 GB of VRAM (never maxes out a 16 GB card). Alternative: qwen3:14b.
       MODEL: gemma3:12b
-      # short pause = maximum search throughput, raise it to go easier on the GPU
-      ITERATION_SLEEP: "10"
-      # scoring passes per rating (averaged, reduces random noise)
+      # candidates per list handed to the re-ranker (smaller = faster runs)
+      POOL: "200"
+      # re-ranker passes per rating (averaged, reduces random noise)
       SCORER_PASSES: "2"
     volumes:
       - ./data:/data:Z
-    restart: unless-stopped
 
 volumes:
   # To reuse an already downloaded model volume from another project:

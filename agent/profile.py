@@ -7,14 +7,13 @@ import re
 
 TEMPLATE = """# Reading Profile
 
-This file belongs to you. The agent reads it again on every iteration.
-Changes (a new reading wish or new books) automatically trigger a fresh
-scoring of both leaderboards.
+This file belongs to you. Enter your data, then run the agent once to
+(re)compute both leaderboards.
 
 ## Current reading wish
 
-Bullet points describing what you want to read right now.
-Leave empty for general recommendations matching your taste.
+Bullet points describing what you want to read right now. This is the only
+part that uses the LLM. Leave empty for pure taste-based recommendations.
 
 - (empty = general)
 
@@ -22,6 +21,7 @@ Leave empty for general recommendations matching your taste.
 
 Books you have read and enjoyed. Type: `nonfiction` or `other`.
 They are never proposed again and steer what gets recommended next.
+English original titles match best.
 
 | Title | Author | Type |
 |-------|--------|------|
@@ -53,23 +53,6 @@ class Profile:
 
     def read_keys(self) -> set[str]:
         return {k for b in self.read if (k := book_key(b["title"], b["author"]))}
-
-    def as_prompt_block(self) -> str:
-        lines = ["Current reading mood (what the user wants to read right now):"]
-        if self.wish:
-            lines += [f"- {w}" for w in self.wish]
-        else:
-            lines.append(
-                "- no specific wish right now: recommend broadly and generally, "
-                "guided only by the reading history below"
-            )
-        lines.append("")
-        lines.append("Books the user has read AND enjoyed (their taste - more like these):")
-        if self.read:
-            lines += [f'- "{b["title"]}" by {b["author"]} ({b["type"]})' for b in self.read]
-        else:
-            lines.append("- (none entered yet)")
-        return "\n".join(lines)
 
 
 def ensure_template(path: str) -> None:

@@ -1,4 +1,4 @@
-"""Lean Ollama client for the generator and scorer calls."""
+"""Lean Ollama client for the wish re-ranker."""
 
 import json
 import logging
@@ -6,31 +6,14 @@ import time
 
 import requests
 
-from . import prompts, scoring
+from . import prompts
 from .profile import norm_title
 
 log = logging.getLogger("agent")
 
-CANDIDATES_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "candidates": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "author": {"type": "string"},
-                    "language": {"type": "string", "enum": ["de", "en"]},
-                },
-                "required": ["title", "author", "language"],
-            },
-        },
-    },
-    "required": ["candidates"],
-}
+BATCH = 20  # books per re-ranker call
 
-SCORES_SCHEMA = {
+RATINGS_SCHEMA = {
     "type": "object",
     "properties": {
         "ratings": {
@@ -40,11 +23,9 @@ SCORES_SCHEMA = {
                 "properties": {
                     "title": {"type": "string"},
                     "wish_fit": {"type": "integer"},
-                    "taste_fit": {"type": "integer"},
-                    "quality": {"type": "integer"},
                     "reason": {"type": "string"},
                 },
-                "required": ["title", "wish_fit", "taste_fit", "quality", "reason"],
+                "required": ["title", "wish_fit", "reason"],
             },
         },
     },
@@ -111,84 +92,40 @@ class Ollama:
         resp.raise_for_status()
         return json.loads(resp.json()["message"]["content"])
 
-    def generate_candidates(
-        self, category: str, profile_block: str, ranking: list, avoid: list, count: int = 10
-    ) -> list[dict]:
-        if ranking:
-            lines = [prompts.RANKING_HEADER.format(worst=ranking[-1]["score"])]
-            lines += [
-                f"- \"{e['title']}\" by {e['author']} (score {e['score']})" for e in ranking
-            ]
-            ranking_block = "\n".join(lines)
-        else:
-            ranking_block = "The leaderboard is still empty."
-        avoid_block = "\n".join(f"- {a}" for a in avoid) if avoid else "(none yet)"
-        user = prompts.GENERATOR_USER.format(
-            brief=prompts.CATEGORY_BRIEFS[category],
-            profile_block=profile_block,
-            ranking_block=ranking_block,
-            avoid_block=avoid_block,
-            count=count,
-        )
-        try:
-            data = self._chat(prompts.GENERATOR_SYSTEM, user, CANDIDATES_SCHEMA, 0.9)
-        except (requests.RequestException, ValueError, KeyError) as exc:
-            log.warning("Generator call failed: %s", exc)
-            return []
-        return [
-            c
-            for c in data.get("candidates", [])
-            if isinstance(c, dict) and c.get("title") and c.get("author")
-        ]
+    def score_wish(self, wish_block: str, books: list[dict], passes: int) -> dict[str, tuple]:
+        """Rates the wish fit of every book, averaged over several passes.
 
-    def score(
-        self, category: str, profile_block: str, books: list[dict], passes: int = 2
-    ) -> list[dict]:
-        """Rates books on three dimensions, averaged over several passes, and
-        combines the result with the Open Library reader signal.
-
-        The LLM answer is matched back via the normalized title.
+        Returns norm_title -> (wish_fit, reason). Books the LLM failed to
+        rate are simply missing and fall back to the no-wish weighting.
         """
-        if not books:
-            return []
-        names = "\n".join(f'- "{b["title"]}" by {b["author"]}' for b in books)
-        user = prompts.SCORER_USER.format(
-            brief=prompts.CATEGORY_BRIEFS[category],
-            profile_block=profile_block,
-            names=names,
-        )
-        # norm_title -> list of (dims, reason) from the individual passes
+        # norm_title -> list of (fit, reason) from the individual passes
         collected: dict[str, list] = {}
-        for _ in range(max(1, passes)):
-            try:
-                data = self._chat(prompts.SCORER_SYSTEM, user, SCORES_SCHEMA, 0.2)
-            except (requests.RequestException, ValueError, KeyError) as exc:
-                log.warning("Scoring call failed: %s", exc)
-                continue
-            for item in data.get("ratings", []):
-                title = norm_title(str(item.get("title", "")))
+        for start in range(0, len(books), BATCH):
+            batch = books[start : start + BATCH]
+            names = "\n".join(f'- "{b["title"]}" by {b["author"]}' for b in batch)
+            user = prompts.RERANK_USER.format(wish_block=wish_block, names=names)
+            for _ in range(max(1, passes)):
                 try:
-                    dims = {
-                        d: max(0, min(100, int(item.get(d, 0)))) for d in scoring.DIMENSIONS
-                    }
-                except (TypeError, ValueError):
+                    data = self._chat(prompts.RERANK_SYSTEM, user, RATINGS_SCHEMA, 0.2)
+                except (requests.RequestException, ValueError, KeyError) as exc:
+                    log.warning("Re-ranker call failed: %s", exc)
                     continue
-                collected.setdefault(title, []).append(
-                    (dims, str(item.get("reason", ""))[:140])
-                )
+                for item in data.get("ratings", []):
+                    try:
+                        fit = max(0, min(100, int(item.get("wish_fit", 0))))
+                    except (TypeError, ValueError):
+                        continue
+                    title = norm_title(str(item.get("title", "")))
+                    collected.setdefault(title, []).append(
+                        (fit, str(item.get("reason", ""))[:140])
+                    )
+            done = min(start + BATCH, len(books))
+            log.info("Re-ranker: %d/%d books rated", done, len(books))
 
-        results = []
+        results = {}
         for book in books:
             runs = collected.get(norm_title(book["title"]))
-            if not runs:
-                continue
-            dims = {
-                d: round(sum(r[0][d] for r in runs) / len(runs)) for d in scoring.DIMENSIONS
-            }
-            final, ol = scoring.combine(
-                dims, book.get("ratings_average"), book.get("ratings_count")
-            )
-            results.append(
-                {**book, "score": final, "dims": dims, "ol_score": ol, "reason": runs[0][1]}
-            )
+            if runs:
+                fit = round(sum(r[0] for r in runs) / len(runs))
+                results[norm_title(book["title"])] = (fit, runs[0][1])
         return results

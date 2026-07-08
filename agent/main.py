@@ -1,31 +1,31 @@
-"""Endlessly running book scout: recommends books matching the reading profile.
+"""Book scout: collaborative-filtering recommendations with an LLM wish re-ranker.
 
-Alternates between the categories 'nonfiction' and 'other' per iteration:
-read the profile, generate candidates, verify against Open Library, score
-critically and maintain the top 20 lists. When the reading profile changes
-(a new wish or a new book), both lists get rescored.
+Computes both top 20 lists from the reading profile and exits - run it again
+after editing the profile. It matches the read books against the Goodreads
+catalog, pulls the nearest neighbours in ALS space as candidates and blends
+the taste signal with real Goodreads reader ratings and - when a reading
+wish is present - with an LLM rating for wish fit. Requires the index built
+by scripts/build_index.py.
 """
 
 import logging
 import os
-import time
+import sys
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
-from . import openlibrary, profile, state as state_mod
+from . import profile, recommend, scoring
+from .catalog import Catalog
 from .llm import Ollama
-from .profile import book_key
-from .state import State
+from .profile import book_key, norm_title
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+INDEX_DIR = os.environ.get("INDEX_DIR", os.path.join(DATA_DIR, "index"))
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")  # empty = no wish re-ranking
 MODEL = os.environ.get("MODEL", "gemma3:12b")
-ITERATION_SLEEP = float(os.environ.get("ITERATION_SLEEP", "120"))
-SCORER_PASSES = int(os.environ.get("SCORER_PASSES", "2"))  # scoring passes, averaged
-LOOKUP_SLEEP = 1.0  # pause between Open Library requests (rate limit politeness)
-RESCORE_CYCLE = 24  # every 24 iterations each list gets rescored once
+SCORER_PASSES = int(os.environ.get("SCORER_PASSES", "2"))  # re-ranker passes, averaged
+POOL = int(os.environ.get("POOL", "200"))  # candidates per list before re-ranking
 
-CATEGORIES = ["nonfiction", "other"]
 CATEGORY_TITLES = {"nonfiction": "Non-Fiction", "other": "Other Books"}
 
 log = logging.getLogger("agent")
@@ -43,166 +43,167 @@ def setup_logging() -> None:
     log.setLevel(logging.INFO)
 
 
-def write_markdown(state: State) -> None:
+def write_text(path: str, text: str) -> None:
+    """Atomic write so a crash never leaves a half-written file behind."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+
+
+def match_profile(catalog: Catalog, prof: profile.Profile):
+    """Maps the read books to catalog rows; unmatched ones still get blocked."""
+    fav_rows, matched, unmatched = [], [], []
+    blocked = prof.read_keys()
+    for book in prof.read:
+        row = catalog.match(book["title"], book["author"])
+        if row is None:
+            unmatched.append(book)
+            continue
+        entry = catalog.books[row]
+        fav_rows.append(row)
+        matched.append({**book, "catalog_title": entry["title"], "catalog_author": entry["author"]})
+        blocked.add(book_key(entry["title"], entry["author"]))
+    return fav_rows, matched, unmatched, blocked
+
+
+def write_match_report(matched: list[dict], unmatched: list[dict]) -> None:
+    lines = [
+        "# Profile Matching",
+        "",
+        "How your read books were matched against the Goodreads catalog.",
+        "Unmatched books cannot steer the recommendations - usually the",
+        "spelling differs; try the English original title.",
+        "",
+        f"## Matched ({len(matched)})",
+        "",
+        "| Your entry | Matched catalog book |",
+        "|------------|----------------------|",
+    ]
+    lines += [
+        f"| {b['title']} — {b['author']} | {b['catalog_title']} — {b['catalog_author']} |"
+        for b in matched
+    ]
+    lines += ["", f"## Not matched ({len(unmatched)})", ""]
+    lines += [f"- {b['title']} — {b['author']}" for b in unmatched] or ["- (none)"]
+    lines.append("")
+    write_text(os.path.join(DATA_DIR, "profile-match.md"), "\n".join(lines))
+
+
+def write_markdown(lists: dict, catalog: Catalog, matched: int, total: int, note: str) -> None:
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    checked = len(state.seen)
-    for category in CATEGORIES:
+    for category, entries in lists.items():
         lines = [
-            f"# Top {len(state.lists[category])} Book Recommendations: {CATEGORY_TITLES[category]}",
+            f"# Top {len(entries)} Book Recommendations: {CATEGORY_TITLES[category]}",
             "",
-            f"_Updated: {stamp} · iteration {state.iteration} · books checked in total: {checked}_",
+            f"_Updated: {stamp} · catalog: {len(catalog)} books · "
+            f"profile: {matched} of {total} read books matched (see profile-match.md)_",
             "",
             "Read one of these and enjoyed it? Add it to `reading-profile.md`.",
             "It then disappears from the list and sharpens future recommendations.",
             "",
-            "Score detail: W = wish fit, T = taste fit, Q = quality and reputation,",
-            "OL = Open Library reader rating.",
-            "",
-            "| # | Title | Author | Year | Language | Score | Detail | Reason |",
-            "|--:|-------|--------|-----:|:--------:|------:|--------|--------|",
+            "Score detail: T = taste closeness to your read books, "
+            "Q = Goodreads reader quality, W = wish fit.",
         ]
-        for i, e in enumerate(state.lists[category], 1):
-            year = e.get("year") or "?"
-            dims = e.get("dims")
-            if dims:
-                detail = f"W{dims['wish_fit']} T{dims['taste_fit']} Q{dims['quality']}"
-                if e.get("ol_score") is not None:
-                    detail += f" OL{e['ol_score']}"
-            else:
-                detail = "?"
+        if note:
+            lines += ["", f"**Note:** {note}"]
+        lines += [
+            "",
+            "| # | Title | Author | Year | Score | Detail | Because you liked | Wish |",
+            "|--:|-------|--------|-----:|------:|--------|-------------------|------|",
+        ]
+        for i, e in enumerate(entries, 1):
+            detail = f"T{e['taste']} Q{e['quality']}"
+            if e.get("wish_fit") is not None:
+                detail += f" W{e['wish_fit']}"
             lines.append(
-                f"| {i} | {e['title']} | {e['author']} | {year} "
-                f"| {e.get('language', '?')} | {e['score']} | {detail} | {e['reason']} |"
+                f"| {i} | {e['title']} | {e['author']} | {e.get('year') or '?'} "
+                f"| {e['score']} | {detail} | {e['because']} | {e.get('reason', '')} |"
             )
         lines.append("")
-        path = os.path.join(DATA_DIR, f"top_{category}.md")
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines))
+        write_text(os.path.join(DATA_DIR, f"top_{category}.md"), "\n".join(lines))
 
 
-def apply_profile(state: State, prof: profile.Profile) -> None:
-    """Marks read books as checked and removes them from the lists."""
-    read_keys = prof.read_keys()
-    for key in read_keys:
-        state.seen[key] = "read"
-    for category in CATEGORIES:
-        kept = [e for e in state.lists[category] if e["key"] not in read_keys]
-        for e in state.lists[category]:
-            if e["key"] in read_keys:
-                log.info("[%s] '%s' was read, removed from the list", category, e["title"])
-        state.lists[category] = kept
+def wish_scores_for(prof: profile.Profile, pools: dict) -> tuple[dict, str]:
+    """LLM wish fit per candidate; degrades gracefully to pure CF ranking."""
+    if not prof.wish:
+        return {}, ""
+    if not OLLAMA_HOST:
+        return {}, "A reading wish is set but no LLM is configured (OLLAMA_HOST); ranked by taste and quality only."
+    llm = Ollama(OLLAMA_HOST, MODEL)
+    try:
+        llm.wait_ready()
+        llm.ensure_model()
+    except Exception as exc:  # keep serving without the LLM
+        log.warning("LLM unavailable, ranking without wish fit: %s", exc)
+        return {}, "LLM unreachable; ranked by taste and quality only."
+    wish_block = "\n".join(f"- {w}" for w in prof.wish)
+    scores = {}
+    for category, entries in pools.items():
+        log.info("[%s] re-ranking %d candidates against the reading wish", category, len(entries))
+        try:
+            scores.update(llm.score_wish(wish_block, entries, SCORER_PASSES))
+        except Exception as exc:  # degrade to CF ranking instead of failing the rebuild
+            log.warning("Re-ranking failed for %s: %s", category, exc)
+            return scores, "LLM re-ranking failed partway; ranked (partly) by taste and quality only."
+    return scores, ""
 
 
-def rescore_list(llm: Ollama, state: State, prof: profile.Profile, category: str) -> None:
-    """Rescores an existing list with the current profile so that the
-    calibration stays sound and profile changes take effect immediately."""
-    entries = state.lists[category]
-    if not entries:
+def rebuild(catalog: Catalog, prof: profile.Profile) -> None:
+    fav_rows, matched, unmatched, blocked = match_profile(catalog, prof)
+    write_match_report(matched, unmatched)
+    for book in unmatched:
+        log.info("profile book not in catalog: '%s' by %s", book["title"], book["author"])
+    if not fav_rows:
+        note = (
+            "No read book could be matched against the catalog yet, so there is "
+            "nothing to learn your taste from. Fill the 'Books read' table in "
+            "reading-profile.md (English original titles match best)."
+        )
+        write_markdown({c: [] for c in recommend.CATEGORIES}, catalog, 0, len(prof.read), note)
         return
-    scored = llm.score(category, prof.as_prompt_block(), entries, passes=SCORER_PASSES)
-    if scored:
-        # unmatched entries keep their old score instead of disappearing
-        scored_keys = {e["key"] for e in scored}
-        kept = [e for e in entries if e["key"] not in scored_keys]
-        state.lists[category] = state_mod.rank(scored + kept)
-    log.info("[%s] list rescored (%d entries)", category, len(state.lists[category]))
 
+    pools = recommend.retrieve(catalog, fav_rows, blocked, POOL)
+    wish_scores, note = wish_scores_for(prof, pools)
 
-def run_iteration(llm: Ollama, state: State, prof: profile.Profile, category: str) -> None:
-    ranking = state.lists[category]
-    profile_block = prof.as_prompt_block()
-    candidates = llm.generate_candidates(category, profile_block, ranking, state.avoid_sample())
-
-    fresh = []
-    for cand in candidates:
-        key = book_key(cand["title"], cand["author"])
-        if key and key not in state.seen and key not in {f["key"] for f in fresh}:
-            fresh.append({**cand, "key": key})
-
-    verified = []
-    for cand in fresh:
-        status, info = openlibrary.lookup(cand["title"], cand["author"])
-        if status == "found":
-            state.seen[cand["key"]] = "found"
-            entry = {
-                "key": cand["key"],
-                "title": info["title"],
-                "author": info["author"],
-                "year": info["year"],
-                "language": cand.get("language", "?"),
-                "ratings_average": info.get("ratings_average"),
-                "ratings_count": info.get("ratings_count"),
-            }
-            # the canonical spelling can differ from the proposal, block both
-            state.seen.setdefault(book_key(entry["title"], entry["author"]), "found")
-            verified.append(entry)
-        elif status == "notfound":
-            state.seen[cand["key"]] = "notfound"
-        # on "error" nothing is stored so the candidate can be checked again later
-        time.sleep(LOOKUP_SLEEP)
-
-    added = 0
-    best_new = None
-    if verified:
-        scored = llm.score(category, profile_block, verified, passes=SCORER_PASSES)
-        # release books that got no rating (error or unmatched title) so
-        # they can be proposed again later
-        scored_keys = {e["key"] for e in scored}
-        for entry in verified:
-            if entry["key"] not in scored_keys:
-                state.seen.pop(entry["key"], None)
-                state.seen.pop(book_key(entry["title"], entry["author"]), None)
-        if scored:
-            best_new = max(e["score"] for e in scored)
-            added = state.merge(category, scored)
-
-    top = state.lists[category][0] if state.lists[category] else None
-    log.info(
-        "[%s] it=%d proposed=%d new=%d exists=%d added=%d best_new=%s top1=%s",
-        category,
-        state.iteration,
-        len(candidates),
-        len(fresh),
-        len(verified),
-        added,
-        best_new if best_new is not None else "-",
-        f"{top['title']}({top['score']})" if top else "-",
-    )
+    lists = {}
+    for category, entries in pools.items():
+        for e in entries:
+            wish = wish_scores.get(norm_title(e["title"]))
+            e["quality"] = scoring.quality_score(e["avg"], e["count"])
+            e["wish_fit"] = wish[0] if wish else None
+            e["reason"] = wish[1] if wish else ""
+            e["score"] = scoring.combine(e["taste"], e["quality"], e["wish_fit"])
+            e["because"] = "; ".join(catalog.books[r]["title"] for r in e["because"])
+        lists[category] = recommend.rank(entries)
+        top = lists[category][0] if lists[category] else None
+        log.info(
+            "[%s] list rebuilt, top1=%s",
+            category,
+            f"{top['title']}({top['score']})" if top else "-",
+        )
+    write_markdown(lists, catalog, len(matched), len(prof.read), note)
 
 
 def main() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
     setup_logging()
-    log.info("Starting book scout (model %s, Ollama %s)", MODEL, OLLAMA_HOST)
+    try:
+        catalog = Catalog(INDEX_DIR)
+    except (FileNotFoundError, ValueError) as exc:
+        log.error(
+            "No recommendation index at %s (%s). Build it once:\n"
+            "  sh scripts/download_data.sh data/goodreads\n"
+            "  python -m scripts.build_index --data-dir data",
+            INDEX_DIR,
+            exc,
+        )
+        sys.exit(1)
+    log.info("Catalog loaded: %d books, %d factors", len(catalog), catalog.factors.shape[1])
 
-    llm = Ollama(OLLAMA_HOST, MODEL)
-    llm.wait_ready()
-    llm.ensure_model()
-
-    profile_path = os.path.join(DATA_DIR, "reading-profile.md")
-    state = State(os.path.join(DATA_DIR, "state.json"))
-    log.info("State loaded: iteration %d, %d checked books", state.iteration, len(state.seen))
-
-    while True:
-        category = CATEGORIES[state.iteration % 2]
-        try:
-            prof = profile.load(profile_path)
-            apply_profile(state, prof)
-            if prof.hash != state.profile_hash:
-                if state.profile_hash:
-                    log.info("Reading profile changed, rescoring both lists")
-                    for cat in CATEGORIES:
-                        rescore_list(llm, state, prof, cat)
-                state.profile_hash = prof.hash
-            elif state.iteration % RESCORE_CYCLE >= RESCORE_CYCLE - 2 and state.iteration > 0:
-                rescore_list(llm, state, prof, category)
-            run_iteration(llm, state, prof, category)
-        except Exception as exc:
-            log.warning("Iteration %d skipped: %s", state.iteration, exc)
-        state.iteration += 1
-        state.save()
-        write_markdown(state)
-        time.sleep(ITERATION_SLEEP)
+    prof = profile.load(os.path.join(DATA_DIR, "reading-profile.md"))
+    log.info("Profile: %d read books, %d wish lines", len(prof.read), len(prof.wish))
+    rebuild(catalog, prof)
 
 
 if __name__ == "__main__":
